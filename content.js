@@ -73,10 +73,8 @@
         continue;
       }
 
-      const userId = extractUserIdFromButton(button);
       const username = extractUsernameFromCard(card);
-
-      if (!shouldBlock({ username, userId })) {
+      if (!username || !blockedUsers.has(username)) {
         continue;
       }
 
