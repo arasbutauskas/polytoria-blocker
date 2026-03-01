@@ -1,5 +1,8 @@
 (() => {
   const STORAGE_KEY = "blockedEntries";
+  const LEGACY_STORAGE_KEY = "blockedUsers";
+  const FRIENDS_PATH = "/my/friends";
+
   let blockedEntries = new Set();
   let scanTimer = null;
 
@@ -7,33 +10,44 @@
     return (value || "").trim().toLowerCase();
   }
 
-  function isDeclineButton(el) {
-    const text = normalize(el.textContent);
-    const onClickText = normalize(el.getAttribute("onclick"));
-    const classText = normalize(el.className);
-
-    return (
-      text.includes("decline") ||
-      text.includes("ignore") ||
-      text.includes("deny") ||
-      onClickText.includes("declinefriendrequest") ||
-      classText.includes("btn-danger")
-    );
+  function onFriendsPage() {
+    return window.location.pathname.startsWith(FRIENDS_PATH);
   }
 
-  function extractUserIdFromButton(button) {
-    return normalize(button.getAttribute("data-user-id") || button.dataset?.userId || "");
+  function getRequestCards() {
+    return Array.from(document.querySelectorAll("#friends-container .card .card-body"));
   }
 
-  function extractUsernameFromCard(card) {
-    const userSpan = card.querySelector(".userlink-default");
-    if (userSpan?.textContent) {
-      return normalize(userSpan.textContent);
+  function getDeclineButton(card) {
+    return card.querySelector('a.btn.btn-danger[onclick*="declineFriendRequest"], button.btn.btn-danger[onclick*="declineFriendRequest"]');
+  }
+
+  function getAcceptButton(card) {
+    return card.querySelector('a.btn.btn-success[onclick*="acceptFriendRequest"], button.btn.btn-success[onclick*="acceptFriendRequest"]');
+  }
+
+  function isRequestCard(card) {
+    return Boolean(getDeclineButton(card) && getAcceptButton(card));
+  }
+
+  function extractUserId(card) {
+    const declineButton = getDeclineButton(card);
+    if (!declineButton) {
+      return "";
     }
 
-    const userHeading = card.querySelector("h5, h4, h3, h2, h1, strong, .username");
-    if (userHeading?.textContent) {
-      return normalize(userHeading.textContent);
+    return normalize(declineButton.getAttribute("data-user-id") || declineButton.dataset?.userId || "");
+  }
+
+  function extractUsername(card) {
+    const explicitName = card.querySelector(".userlink-default");
+    if (explicitName?.textContent) {
+      return normalize(explicitName.textContent);
+    }
+
+    const heading = card.querySelector("h5, h4, h3, h2, h1, strong, .username");
+    if (heading?.textContent) {
+      return normalize(heading.textContent);
     }
 
     const profileLink = card.querySelector('a[href^="/users/"]');
@@ -44,42 +58,49 @@
     return "";
   }
 
-  function shouldBlock({ username, userId }) {
-    if (userId && blockedEntries.has(userId)) {
-      return true;
-    }
+  function shouldBlock(username, userId) {
+    return (userId && blockedEntries.has(userId)) || (username && blockedEntries.has(username));
+  }
 
-    if (username && blockedEntries.has(username)) {
-      return true;
-    }
+  function triggerDecline(declineButton) {
+    declineButton.dataset.polyBlockerDone = "1";
 
-    return false;
+    // Primary path for inline onclick handlers.
+    declineButton.click();
+
+    // Fallback in case the site binds listeners differently.
+    declineButton.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        view: window
+      })
+    );
   }
 
   function scanAndDecline() {
-    if (!blockedEntries.size) {
+    if (!onFriendsPage() || !blockedEntries.size) {
       return;
     }
 
-    const candidates = Array.from(document.querySelectorAll("a.btn, button"));
-
-    for (const button of candidates) {
-      if (button.dataset.polyBlockerDone === "1" || !isDeclineButton(button)) {
+    for (const card of getRequestCards()) {
+      if (!isRequestCard(card)) {
         continue;
       }
 
-      const card = button.closest(".card-body, .card, .friend-request, .request, li, tr, .media") || button.parentElement;
-      if (!card) {
+      const declineButton = getDeclineButton(card);
+      if (!declineButton || declineButton.dataset.polyBlockerDone === "1") {
         continue;
       }
 
-      const username = extractUsernameFromCard(card);
-      if (!username || !blockedUsers.has(username)) {
+      const userId = extractUserId(card);
+      const username = extractUsername(card);
+
+      if (!shouldBlock(username, userId)) {
         continue;
       }
 
-      button.dataset.polyBlockerDone = "1";
-      button.click();
+      triggerDecline(declineButton);
       console.info(`[Polytoria Blocker] Declined request from ${username || "unknown"} (id: ${userId || "unknown"}).`);
     }
   }
@@ -89,14 +110,14 @@
       clearTimeout(scanTimer);
     }
 
-    scanTimer = setTimeout(scanAndDecline, 120);
+    scanTimer = setTimeout(scanAndDecline, 80);
   }
 
   function loadBlockedEntries(callback) {
-    chrome.storage.sync.get([STORAGE_KEY, "blockedUsers"], (result) => {
-      const entries = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
-      const legacy = Array.isArray(result.blockedUsers) ? result.blockedUsers : [];
-      blockedEntries = new Set([...entries, ...legacy].map(normalize).filter(Boolean));
+    chrome.storage.sync.get([STORAGE_KEY, LEGACY_STORAGE_KEY], (result) => {
+      const currentEntries = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
+      const legacyEntries = Array.isArray(result[LEGACY_STORAGE_KEY]) ? result[LEGACY_STORAGE_KEY] : [];
+      blockedEntries = new Set([...currentEntries, ...legacyEntries].map(normalize).filter(Boolean));
       callback();
     });
   }
@@ -108,14 +129,16 @@
       return;
     }
 
-    if (!changes[STORAGE_KEY] && !changes.blockedUsers) {
+    if (!changes[STORAGE_KEY] && !changes[LEGACY_STORAGE_KEY]) {
       return;
     }
 
-    const nextPrimary = Array.isArray(changes[STORAGE_KEY]?.newValue) ? changes[STORAGE_KEY].newValue : [];
-    const nextLegacy = Array.isArray(changes.blockedUsers?.newValue) ? changes.blockedUsers.newValue : [];
+    const nextEntries = Array.isArray(changes[STORAGE_KEY]?.newValue) ? changes[STORAGE_KEY].newValue : [];
+    const nextLegacy = Array.isArray(changes[LEGACY_STORAGE_KEY]?.newValue)
+      ? changes[LEGACY_STORAGE_KEY].newValue
+      : [];
 
-    blockedEntries = new Set([...nextPrimary, ...nextLegacy].map(normalize).filter(Boolean));
+    blockedEntries = new Set([...nextEntries, ...nextLegacy].map(normalize).filter(Boolean));
     scheduleScan();
   });
 
@@ -123,6 +146,13 @@
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true
+  });
+
+  // Requests are loaded asynchronously via axios in page scripts.
+  const intervalId = setInterval(scanAndDecline, 1000);
+
+  window.addEventListener("beforeunload", () => {
+    clearInterval(intervalId);
   });
 
   scheduleScan();
