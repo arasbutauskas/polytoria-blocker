@@ -1,13 +1,14 @@
 # Polytoria Friend Request Blocker
 
-A Chrome/Chromium extension that automatically declines incoming friend requests from usernames you choose on `polytoria.com`.
+A Chrome/Chromium extension that automatically declines incoming friend requests from accounts you choose on `polytoria.com`.
 
 ## Features
 
-- Block a custom list of usernames (case-insensitive).
-- Automatically scans request UI and presses the decline/ignore button when a blocked sender is detected.
-- Simple popup UI to add/remove blocked usernames.
-- Uses `chrome.storage.sync` so your list can sync across browsers signed into the same profile.
+- Block by **username** or **numeric user ID** (case-insensitive for usernames).
+- Auto-detects Polytoria's friend request controls and presses **Decline** automatically for blocked entries.
+- Supports current friend request markup (e.g. `.userlink-default`, `data-user-id`, `declineFriendRequest(this)`).
+- Simple popup UI to add/remove blocked entries.
+- Uses `chrome.storage.sync` to keep your blocklist synced in your browser profile.
 
 ## Install (Developer Mode)
 
@@ -19,12 +20,11 @@ A Chrome/Chromium extension that automatically declines incoming friend requests
 ## Usage
 
 1. Click the extension icon.
-2. Add usernames you want blocked.
-3. Open Polytoria where friend requests appear.
-4. Requests from blocked users will be auto-declined.
+2. Add usernames and/or user IDs you want blocked (examples: `11H`, `463353`).
+3. Open `https://polytoria.com/my/friends`.
+4. Incoming requests from blocked entries are auto-declined.
 
 ## Notes
 
-- Usernames are normalized to lowercase (`ExampleUser` and `exampleuser` are treated the same).
-- The blocker looks for request cards and decline-like buttons (Decline/Ignore/Deny text).
-- If Polytoria changes its UI selectors, you may need to adjust `content.js`.
+- `ExampleUser` and `exampleuser` are treated as the same username.
+- If Polytoria significantly changes its request DOM structure, `content.js` selectors may need updates.

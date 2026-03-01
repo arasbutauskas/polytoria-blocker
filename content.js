@@ -1,44 +1,74 @@
 (() => {
-  const STORAGE_KEY = "blockedUsers";
-  let blockedUsers = new Set();
+  const STORAGE_KEY = "blockedEntries";
+  let blockedEntries = new Set();
   let scanTimer = null;
 
-  function normalize(text) {
-    return (text || "").trim().toLowerCase();
+  function normalize(value) {
+    return (value || "").trim().toLowerCase();
   }
 
-  function isDeclineButton(button) {
-    const text = normalize(button.textContent);
-    return text.includes("decline") || text.includes("ignore") || text.includes("deny");
+  function isDeclineButton(el) {
+    const text = normalize(el.textContent);
+    const onClickText = normalize(el.getAttribute("onclick"));
+    const classText = normalize(el.className);
+
+    return (
+      text.includes("decline") ||
+      text.includes("ignore") ||
+      text.includes("deny") ||
+      onClickText.includes("declinefriendrequest") ||
+      classText.includes("btn-danger")
+    );
+  }
+
+  function extractUserIdFromButton(button) {
+    return normalize(button.getAttribute("data-user-id") || button.dataset?.userId || "");
   }
 
   function extractUsernameFromCard(card) {
-    const link = card.querySelector('a[href*="/users/"]');
-    if (link?.textContent) {
-      return normalize(link.textContent);
+    const userSpan = card.querySelector(".userlink-default");
+    if (userSpan?.textContent) {
+      return normalize(userSpan.textContent);
     }
 
-    const dataName = card.getAttribute("data-username") || card.dataset?.username;
-    if (dataName) {
-      return normalize(dataName);
+    const userHeading = card.querySelector("h5, h4, h3, h2, h1, strong, .username");
+    if (userHeading?.textContent) {
+      return normalize(userHeading.textContent);
     }
 
-    const heading = card.querySelector("h1, h2, h3, h4, strong, .username");
-    return normalize(heading?.textContent);
+    const profileLink = card.querySelector('a[href^="/users/"]');
+    if (profileLink?.textContent) {
+      return normalize(profileLink.textContent);
+    }
+
+    return "";
+  }
+
+  function shouldBlock({ username, userId }) {
+    if (userId && blockedEntries.has(userId)) {
+      return true;
+    }
+
+    if (username && blockedEntries.has(username)) {
+      return true;
+    }
+
+    return false;
   }
 
   function scanAndDecline() {
-    if (!blockedUsers.size) {
+    if (!blockedEntries.size) {
       return;
     }
 
-    const buttons = Array.from(document.querySelectorAll("button, a.btn"));
-    for (const button of buttons) {
+    const candidates = Array.from(document.querySelectorAll("a.btn, button"));
+
+    for (const button of candidates) {
       if (button.dataset.polyBlockerDone === "1" || !isDeclineButton(button)) {
         continue;
       }
 
-      const card = button.closest(".card, .friend-request, .request, li, tr, .media") || button.parentElement;
+      const card = button.closest(".card-body, .card, .friend-request, .request, li, tr, .media") || button.parentElement;
       if (!card) {
         continue;
       }
@@ -50,7 +80,7 @@
 
       button.dataset.polyBlockerDone = "1";
       button.click();
-      console.info(`[Polytoria Blocker] Declined request from ${username}.`);
+      console.info(`[Polytoria Blocker] Declined request from ${username || "unknown"} (id: ${userId || "unknown"}).`);
     }
   }
 
@@ -62,23 +92,30 @@
     scanTimer = setTimeout(scanAndDecline, 120);
   }
 
-  function readUsersFromStorage(callback) {
-    chrome.storage.sync.get([STORAGE_KEY], (result) => {
-      const users = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
-      blockedUsers = new Set(users.map(normalize).filter(Boolean));
+  function loadBlockedEntries(callback) {
+    chrome.storage.sync.get([STORAGE_KEY, "blockedUsers"], (result) => {
+      const entries = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
+      const legacy = Array.isArray(result.blockedUsers) ? result.blockedUsers : [];
+      blockedEntries = new Set([...entries, ...legacy].map(normalize).filter(Boolean));
       callback();
     });
   }
 
-  readUsersFromStorage(scanAndDecline);
+  loadBlockedEntries(scanAndDecline);
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== "sync" || !changes[STORAGE_KEY]) {
+    if (areaName !== "sync") {
       return;
     }
 
-    const next = Array.isArray(changes[STORAGE_KEY].newValue) ? changes[STORAGE_KEY].newValue : [];
-    blockedUsers = new Set(next.map(normalize).filter(Boolean));
+    if (!changes[STORAGE_KEY] && !changes.blockedUsers) {
+      return;
+    }
+
+    const nextPrimary = Array.isArray(changes[STORAGE_KEY]?.newValue) ? changes[STORAGE_KEY].newValue : [];
+    const nextLegacy = Array.isArray(changes.blockedUsers?.newValue) ? changes.blockedUsers.newValue : [];
+
+    blockedEntries = new Set([...nextPrimary, ...nextLegacy].map(normalize).filter(Boolean));
     scheduleScan();
   });
 

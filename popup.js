@@ -1,4 +1,4 @@
-const STORAGE_KEY = "blockedUsers";
+const STORAGE_KEY = "blockedEntries";
 
 const addForm = document.getElementById("add-form");
 const usernameInput = document.getElementById("username");
@@ -6,9 +6,9 @@ const blockedList = document.getElementById("blocked-list");
 const emptyState = document.getElementById("empty-state");
 const statusEl = document.getElementById("status");
 
-let blockedUsers = [];
+let blockedEntries = [];
 
-function normalizeUsername(value) {
+function normalizeEntry(value) {
   return value.trim().toLowerCase();
 }
 
@@ -17,30 +17,31 @@ function showStatus(text, isError = false) {
   statusEl.style.color = isError ? "#fca5a5" : "#34d399";
 }
 
-function saveUsers() {
-  chrome.storage.sync.set({ [STORAGE_KEY]: blockedUsers }, () => {
+function saveEntries() {
+  chrome.storage.sync.set({ [STORAGE_KEY]: blockedEntries }, () => {
     showStatus("Saved.");
   });
 }
 
-function renderUsers() {
+function renderEntries() {
   blockedList.innerHTML = "";
-  emptyState.style.display = blockedUsers.length ? "none" : "block";
+  emptyState.style.display = blockedEntries.length ? "none" : "block";
 
-  blockedUsers.forEach((username) => {
+  blockedEntries.forEach((entry) => {
     const li = document.createElement("li");
 
     const label = document.createElement("span");
-    label.textContent = username;
+    const type = /^\d+$/.test(entry) ? "ID" : "User";
+    label.textContent = `${entry} (${type})`;
 
     const removeBtn = document.createElement("button");
     removeBtn.textContent = "Remove";
     removeBtn.className = "remove";
     removeBtn.type = "button";
     removeBtn.addEventListener("click", () => {
-      blockedUsers = blockedUsers.filter((u) => u !== username);
-      saveUsers();
-      renderUsers();
+      blockedEntries = blockedEntries.filter((v) => v !== entry);
+      saveEntries();
+      renderEntries();
     });
 
     li.append(label, removeBtn);
@@ -50,32 +51,41 @@ function renderUsers() {
 
 addForm.addEventListener("submit", (event) => {
   event.preventDefault();
-  const normalized = normalizeUsername(usernameInput.value);
+  const normalized = normalizeEntry(usernameInput.value);
 
   if (!normalized) {
-    showStatus("Username cannot be empty.", true);
+    showStatus("Entry cannot be empty.", true);
     return;
   }
 
-  if (blockedUsers.includes(normalized)) {
-    showStatus("That username is already blocked.", true);
+  if (blockedEntries.includes(normalized)) {
+    showStatus("That entry is already blocked.", true);
     return;
   }
 
-  blockedUsers.push(normalized);
-  blockedUsers.sort();
+  blockedEntries.push(normalized);
+  blockedEntries.sort();
 
-  saveUsers();
-  renderUsers();
+  saveEntries();
+  renderEntries();
 
   usernameInput.value = "";
   usernameInput.focus();
 });
 
-chrome.storage.sync.get([STORAGE_KEY], (result) => {
-  blockedUsers = Array.isArray(result[STORAGE_KEY])
-    ? result[STORAGE_KEY].map(normalizeUsername).filter(Boolean)
-    : [];
-  blockedUsers = [...new Set(blockedUsers)].sort();
-  renderUsers();
+chrome.storage.sync.get([STORAGE_KEY, "blockedUsers"], (result) => {
+  const fromNewKey = Array.isArray(result[STORAGE_KEY]) ? result[STORAGE_KEY] : [];
+  const fromLegacyKey = Array.isArray(result.blockedUsers) ? result.blockedUsers : [];
+
+  blockedEntries = [...fromNewKey, ...fromLegacyKey]
+    .map(normalizeEntry)
+    .filter(Boolean);
+
+  blockedEntries = [...new Set(blockedEntries)].sort();
+  renderEntries();
+
+  if (fromLegacyKey.length) {
+    chrome.storage.sync.remove("blockedUsers");
+    saveEntries();
+  }
 });
